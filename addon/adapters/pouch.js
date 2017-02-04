@@ -147,7 +147,7 @@ export default DS.RESTAdapter.extend({
     if (type.documentType) {
       schemaDef['documentType'] = type.documentType;
     }
-    
+
     let config = getOwner(this).resolveRegistration('config:environment');
     let dontsavedefault = config['emberpouch'] && config['emberpouch']['dontsavehasmany'];
     // else it's new, so update
@@ -173,7 +173,7 @@ export default DS.RESTAdapter.extend({
         	let inverse = type.inverseFor(rel.key, store);
         	if (inverse) {
 	        	if (inverse.kind === 'belongsTo') {
-	        		self.get('db').createIndex({index: { fields: ['data.' + inverse.name, '_id'] }});	
+	        		self.get('db').createIndex({index: { fields: ['data.' + inverse.name, '_id'] }});
 	        		if (options.async) {
 	        			includeRel = false;
 	        		} else {
@@ -186,7 +186,7 @@ export default DS.RESTAdapter.extend({
 	        	console.warn(type.modelName + " has a hasMany relationship with name " + rel.key + " that has no inverse.");
 	        }
         }
-        
+
         if (includeRel) {
 	        relDef[rel.kind] = {
 	          type: self.getRecordTypeName(relModel),
@@ -308,7 +308,7 @@ export default DS.RESTAdapter.extend({
     this._init(store, type);
     return this.get('db').rel.find(this.getRecordTypeName(type), ids);
   },
-  
+
   findHasMany: function(store, record, link, rel) {
   	let inverse = record.type.inverseFor(rel.key, store);
   	if (inverse && inverse.kind === 'belongsTo') {
@@ -391,5 +391,12 @@ export default DS.RESTAdapter.extend({
     var data = this._recordToData(store, type, record);
     return this.get('db').rel.del(this.getRecordTypeName(type), data)
       .then(extractDeleteRecord);
+  },
+
+  getAttachment: function(model, attr, /*opt*/ idx) {
+    let type = model.constructor;
+    let id = model.get('id');
+    let name = model.get(attr)[idx !== undefined ? idx : 0].name;
+    return this.get('db').rel.getAttachment(this.getRecordTypeName(type), id, name);
   }
 });
