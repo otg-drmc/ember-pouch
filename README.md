@@ -278,15 +278,18 @@ export default Ember.Route.extend({
   model() {
     return this.store.query('smasher',  {
       filter: {
-        name: 'Mario'
-        sort: [
-          { debut: 'desc' }
-        ]
-      }
+        name: 'Mario',
+        debut: { '$gte': null }
+      },
+      sort: [
+        { debut: 'desc' }
+      ]
     })
   }
 });
 ```
+
+Note that this query would require a custom index including both fields `data.name` and `data.debut`.  Any field in `sort` must also be included in `filter`.  Only `$eq`, `$gt`, `$gte`, `$lt`, and `$lte` can be used when matching a custom index.
 
 ### store.queryRecord(model, options)
 
@@ -398,15 +401,15 @@ If you want to go completely [offline-first](http://offlinefirst.org/), you'll a
 
 An easy way to secure your Ember Pouch-using app is to ensure that data can only be fetched from CouchDB &ndash; not from some other server (e.g. in an [XSS attack](https://en.wikipedia.org/wiki/Cross-site_scripting)).
 
-To do so, add a Content Security Policy whitelist entry to `/config/environment.js`:
+You can use the [content-security-policy](https://github.com/rwjblue/ember-cli-content-security-policy) plugin to enable Content Security Policy in Ember CLI. You also will have to set the CSP HTTP header on your backend in production.
+
+To use, add a Content Security Policy whitelist entry to `/config/environment.js`:
 
 ```js
 ENV.contentSecurityPolicy = {
   "connect-src": "'self' http://your_couch_host.com:5984"
 };
 ```
-
-Ember CLI includes the [content-security-policy](https://github.com/rwjblue/ember-cli-content-security-policy) plugin by default to ensure that CSP is kept in the forefront of your thoughts. You still have actually to set the CSP HTTP header on your backend in production.
 
 ### CORS setup (important!)
 
@@ -510,6 +513,12 @@ This project was originally based on the [ember-data-hal-adapter](https://github
 And of course thanks to all our wonderful contributors, [here](https://github.com/nolanlawson/ember-pouch/graphs/contributors) and [in Relational Pouch](https://github.com/nolanlawson/relational-pouch/graphs/contributors)!
 
 ## Changelog
+* **4.2.5**
+  - Correct Security documentation [*177](https://github.com/nolanlawson/ember-pouch/pull/177)
+  - Fix sort documentation and add additional notes [*176](https://github.com/nolanlawson/ember-pouch/pull/176)
+  - update ember-getowner-polyfill to remove deprecation warnings [*174](https://github.com/nolanlawson/ember-pouch/pull/174)
+* **4.2.4**
+  - Fix attachments typo in README [*170](https://github.com/nolanlawson/ember-pouch/pull/170)
 * **4.2.3**
   - Update pouchdb to the latest version
   - Minor typofix [#166](https://github.com/nolanlawson/ember-pouch/pull/166)
