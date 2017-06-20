@@ -288,7 +288,7 @@ export default DS.RESTAdapter.extend({
    *
    * This method uses the camelized version of the model name in order to
    * preserve data compatibility with older versions of ember-pouch. See
-   * nolanlawson/ember-pouch#63 for a discussion.
+   * pouchdb-community/ember-pouch#63 for a discussion.
    *
    * You can override this to change the behavior. If you do, be aware that you
    * need to execute a data migration to ensure that any existing records are
@@ -340,7 +340,17 @@ export default DS.RESTAdapter.extend({
   },
 
   queryRecord: function(store, type, query) {
-    return this.query(store, type, query);
+    return this.query(store, type, query).then(results => {
+      let recordType = this.getRecordTypeName(type);
+      let recordTypePlural = pluralize(recordType);
+      if(results[recordTypePlural].length > 0){
+        results[recordType] = results[recordTypePlural][0];
+      } else {
+        results[recordType] = null;
+      }
+      delete results[recordTypePlural];
+      return results;
+    });
   },
 
   /**
