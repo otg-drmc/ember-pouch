@@ -1,32 +1,38 @@
-import { Adapter } from 'ember-pouch';
-import PouchDB from 'pouchdb';
 import config from '<%= dasherizedPackageName %>/config/environment';
-import Ember from 'ember';
+import PouchDB from 'ember-pouch/pouchdb';
+import { Adapter } from 'ember-pouch';
+import { assert } from '@ember/debug';
+import { isEmpty } from '@ember/utils';
 
-const { assert, isEmpty } = Ember;
+export default class ApplicationAdapter extends Adapter {
 
-function createDb() {
-  let localDb = config.emberPouch.localDb;
+  constructor() {
+    super(...arguments);
 
-  assert('emberPouch.localDb must be set', !isEmpty(localDb));
+    const localDb = config.emberPouch.localDb;
 
-  let db = new PouchDB(localDb);
+    assert('emberPouch.localDb must be set', !isEmpty(localDb));
 
-  if (config.emberPouch.remoteDb) {
-    let remoteDb = new PouchDB(config.emberPouch.remoteDb);
+    const db = new PouchDB(localDb);
+    this.db = db;
 
-    db.sync(remoteDb, {
-      live: true,
-      retry: true
+    // If we have specified a remote CouchDB instance, then replicate our local database to it
+    if (config.emberPouch.remoteDb) {
+      let remoteDb = new PouchDB(config.emberPouch.remoteDb);
+
+      db.sync(remoteDb, {
+        live: true,
+        retry: true
+      });
+    }
+
+    return this;
+  }
+
+  unloadedDocumentChanged(obj) {
+    let recordTypeName = this.getRecordTypeName(this.store.modelFor(obj.type));
+    this.db.rel.find(recordTypeName, obj.id).then((doc) => {
+      this.store.pushPayload(recordTypeName, doc);
     });
   }
-
-  return db;
 }
-
-export default Adapter.extend({
-  init() {
-    this._super(...arguments);
-    this.set('db', createDb());
-  }
-});
