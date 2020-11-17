@@ -1,23 +1,20 @@
-import Ember from 'ember';
+import { assert } from '@ember/debug';
+import { isEmpty } from '@ember/utils';
+import { all, defer } from 'rsvp';
+import { get } from '@ember/object';
+import { getOwner } from '@ember/application';
+import { bind } from '@ember/runloop';
+import { on } from '@ember/object/evented';
+import { classify, camelize } from '@ember/string';
 import DS from 'ember-data';
+import { pluralize } from 'ember-inflector';
 //import BelongsToRelationship from 'ember-data/-private/system/relationships/state/belongs-to';
 
 import {
-  extractDeleteRecord
+  extractDeleteRecord,
+  shouldSaveRelationship,
+  configFlagDisabled
 } from '../utils';
-
-const {
-  getOwner,
-  run: {
-    bind
-  },
-  on,
-  String: {
-    pluralize,
-    camelize,
-    classify
-  }
-} = Ember;
 
 //BelongsToRelationship.reopen({
 //  findRecord() {
@@ -29,6 +26,7 @@ const {
 //});
 
 export default DS.RESTAdapter.extend({
+  fixDeleteBug: true,
   coalesceFindRequests: false,
 
   // The change listener ensures that individual records are kept up to date
@@ -108,18 +106,27 @@ export default DS.RESTAdapter.extend({
     var recordInStore = store.peekRecord(obj.type, obj.id);
     if (!recordInStore) {
       // The record hasn't been loaded into the store; no need to reload its data.
-      this.unloadedDocumentChanged(obj);
+      if (this.createdRecords[obj.id]) {
+        delete this.createdRecords[obj.id];
+      } else {
+        this.unloadedDocumentChanged(obj);
+      }
       return;
     }
-    if (!recordInStore.get('isLoaded') || recordInStore.get('hasDirtyAttributes')) {
+    if (!recordInStore.get('isLoaded') || recordInStore.get('rev') === change.changes[0].rev || recordInStore.get('hasDirtyAttributes')) {
       // The record either hasn't loaded yet or has unpersisted local changes.
       // In either case, we don't want to refresh it in the store
       // (and for some substates, attempting to do so will result in an error).
+      // We also ignore the change if we already have the latest revision
       return;
     }
 
     if (change.deleted) {
-      store.unloadRecord(recordInStore);
+      if (this.fixDeleteBug) {
+        recordInStore._internalModel.transitionTo('deleted.saved');//work around ember-data bug
+      } else {
+        store.unloadRecord(recordInStore);
+      }
     } else {
       recordInStore.reload();
     }
@@ -141,15 +148,23 @@ export default DS.RESTAdapter.extend({
   willDestroy: function() {
     this._stopChangesListener();
   },
+  
+  init() {
+    this._indexPromises = [];
+    this.waitingForConsistency = {};
+    this.createdRecords = {};
+  },
+  
+  _indexPromises: null,
 
-  _init: function (store, type) {
+  _init: function (store, type, indexPromises) {
     var self = this,
         recordTypeName = this.getRecordTypeName(type);
     if (!this.get('db') || typeof this.get('db') !== 'object') {
       throw new Error('Please set the `db` property on the adapter.');
     }
 
-    if (!Ember.get(type, 'attributes').has('rev')) {
+    if (!get(type, 'attributes').has('rev')) {
       var modelName = classify(recordTypeName);
       throw new Error('Please add a `rev` attribute of type `string`' +
         ' on the ' + modelName + ' model.');
@@ -164,7 +179,7 @@ export default DS.RESTAdapter.extend({
     for (var i = 0, len = this._schema.length; i < len; i++) {
       var currentSchemaDef = this._schema[i];
       if (currentSchemaDef.singular === singular) {
-        return;
+        return all(this._indexPromises);
       }
     }
 
@@ -178,31 +193,40 @@ export default DS.RESTAdapter.extend({
     }
 
     let config = getOwner(this).resolveRegistration('config:environment');
-    let dontsavedefault = config['emberpouch'] && config['emberpouch']['dontsavehasmany'];
     // else it's new, so update
     this._schema.push(schemaDef);
     // check all the subtypes
     // We check the type of `rel.type`because with ember-data beta 19
     // `rel.type` switched from DS.Model to string
-    type.eachRelationship(function (_, rel) {
+    
+    var rels = [];//extra array is needed since type.relationships/byName return a Map that is not iterable
+    type.eachRelationship((_relName, rel) => rels.push(rel));
+    
+    let rootCall = indexPromises == undefined;
+    if (rootCall) {
+      indexPromises = [];
+    }
+    
+    for (let rel of rels) {
       if (rel.kind !== 'belongsTo' && rel.kind !== 'hasMany') {
         // TODO: support inverse as well
-        return; // skip
+        continue; // skip
       }
       var relDef = {},
           relModel = (typeof rel.type === 'string' ? store.modelFor(rel.type) : rel.type);
       if (relModel) {
         let includeRel = true;
-        rel.options = rel.options || {};
+        if (!('options' in rel)) rel.options = {};
+        
         if (typeof(rel.options.async) === "undefined") {
-          rel.options.async = config.emberpouch && !Ember.isEmpty(config.emberpouch.async) ? config.emberpouch.async : true;//default true from https://github.com/emberjs/data/pull/3366
+          rel.options.async = config.emberPouch && !isEmpty(config.emberPouch.async) ? config.emberPouch.async : true;//default true from https://github.com/emberjs/data/pull/3366
         }
         let options = Object.create(rel.options);
-        if (rel.kind === 'hasMany' && (options.dontsave || typeof(options.dontsave) === 'undefined' && dontsavedefault)) {
+        if (rel.kind === 'hasMany' && !shouldSaveRelationship(self, rel)) {
           let inverse = type.inverseFor(rel.key, store);
           if (inverse) {
             if (inverse.kind === 'belongsTo') {
-              self.get('db').createIndex({index: { fields: ['data.' + inverse.name, '_id'] }});
+              indexPromises.push(self.get('db').createIndex({index: { fields: ['data.' + inverse.name, '_id'] }}));
               if (options.async) {
                 includeRel = false;
               } else {
@@ -222,11 +246,19 @@ export default DS.RESTAdapter.extend({
           }
           schemaDef.relations[rel.key] = relDef;
         }
-        self._init(store, relModel);
+        
+        self._init(store, relModel, indexPromises);
       }
-    });
+    }
 
     this.get('db').setSchema(this._schema);
+    
+    if (rootCall) {
+      this._indexPromises = this._indexPromises.concat(indexPromises);
+      return all(indexPromises).then(() => {
+        this._indexPromises = this._indexPromises.filter(x => !indexPromises.includes(x));
+      });
+    }
   },
 
   _recordToData: function (store, type, record) {
@@ -323,18 +355,19 @@ export default DS.RESTAdapter.extend({
     return camelize(type.modelName);
   },
 
-  findAll: function(store, type /*, sinceToken */) {
+  findAll: async function(store, type /*, sinceToken */) {
     // TODO: use sinceToken
-    this._init(store, type);
+    await this._init(store, type);
     return this.get('db').rel.find(this.getRecordTypeName(type));
   },
 
-  findMany: function(store, type, ids) {
-    this._init(store, type);
+  findMany: async function(store, type, ids) {
+    await this._init(store, type);
     return this.get('db').rel.find(this.getRecordTypeName(type), ids);
   },
 
-  findHasMany: function(store, record, link, rel) {
+  findHasMany: async function(store, record, link, rel) {
+    await this._init(store, record.type);
     let inverse = record.type.inverseFor(rel.key, store);
     if (inverse && inverse.kind === 'belongsTo') {
       return this.get('db').rel.findHasMany(camelize(rel.type), inverse.name, record.id);
@@ -345,8 +378,8 @@ export default DS.RESTAdapter.extend({
     }
   },
 
-  query: function(store, type, query) {
-    this._init(store, type);
+  query: async function(store, type, query) {
+    await this._init(store, type);
 
     var recordTypeName = this.getRecordTypeName(type);
     var db = this.get('db');
@@ -355,29 +388,33 @@ export default DS.RESTAdapter.extend({
       selector: this._buildSelector(query.filter)
     };
 
-    if (!Ember.isEmpty(query.sort)) {
+    if (!isEmpty(query.sort)) {
       queryParams.sort = this._buildSort(query.sort);
     }
 
-    if (!Ember.isEmpty(query.limit)) {
+    if (!isEmpty(query.limit)) {
       queryParams.limit = query.limit;
     }
 
-    return db.find(queryParams).then(pouchRes => db.rel.parseRelDocs(recordTypeName, pouchRes.docs));
+    if (!isEmpty(query.skip)) {
+      queryParams.skip = query.skip;
+    }
+
+    let pouchRes = await db.find(queryParams);
+    return db.rel.parseRelDocs(recordTypeName, pouchRes.docs);
   },
 
-  queryRecord: function(store, type, query) {
-    return this.query(store, type, query).then(results => {
-      let recordType = this.getRecordTypeName(type);
-      let recordTypePlural = pluralize(recordType);
-      if(results[recordTypePlural].length > 0){
-        results[recordType] = results[recordTypePlural][0];
-      } else {
-        results[recordType] = null;
-      }
-      delete results[recordTypePlural];
-      return results;
-    });
+  queryRecord: async function(store, type, query) {
+    let results = await this.query(store, type, query);
+    let recordType = this.getRecordTypeName(type);
+    let recordTypePlural = pluralize(recordType);
+    if(results[recordTypePlural].length > 0){
+      results[recordType] = results[recordTypePlural][0];
+    } else {
+      results[recordType] = null;
+    }
+    delete results[recordTypePlural];
+    return results;
   },
 
   /**
@@ -387,76 +424,102 @@ export default DS.RESTAdapter.extend({
    * `findRecord`. This can be removed when the library drops support
    * for deprecated methods.
   */
-  find: function (store, type, id) {
+  find: function (store, type, id) {  
     return this.findRecord(store, type, id);
   },
 
-  findRecord: function (store, type, id) {
-    this._init(store, type);
+  findRecord: async function (store, type, id) {
+    await this._init(store, type);
     var recordTypeName = this.getRecordTypeName(type);
     return this._findRecord(recordTypeName, id);
   },
 
-  _findRecord(recordTypeName, id) {
-    return this.get('db').rel.find(recordTypeName, id).then(payload => {
-      // Ember Data chokes on empty payload, this function throws
-      // an error when the requested data is not found
-      if (typeof payload === 'object' && payload !== null) {
-        var singular = recordTypeName;
-        var plural = pluralize(recordTypeName);
+  async _findRecord(recordTypeName, id) {
+    let payload = await this.get('db').rel.find(recordTypeName, id);
+    // Ember Data chokes on empty payload, this function throws
+    // an error when the requested data is not found
+    if (typeof payload === 'object' && payload !== null) {
+      var singular = recordTypeName;
+      var plural = pluralize(recordTypeName);
 
-        var results = payload[singular] || payload[plural];
-        if (results && results.length > 0) {
-          return payload;
-        }
+      var results = payload[singular] || payload[plural];
+      if (results && results.length > 0) {
+        return payload;
       }
+    }
 
+    if (configFlagDisabled(this, 'eventuallyConsistent'))
+      throw new Error("Document of type '" + recordTypeName + "' with id '" + id + "' not found.");
+    else
       return this._eventuallyConsistent(recordTypeName, id);
-    });
   },
 
   //TODO: cleanup promises on destroy or db change?
-  waitingForConsistency: {},
+  waitingForConsistency: null,
   _eventuallyConsistent: function(type, id) {
     let pouchID = this.get('db').rel.makeDocID({type, id});
-    let defer = Ember.RSVP.defer();
-    this.waitingForConsistency[pouchID] = defer;
+    let defered = defer();
+    this.waitingForConsistency[pouchID] = defered;
 
     return this.get('db').rel.isDeleted(type, id).then(deleted => {
       //TODO: should we test the status of the promise here? Could it be handled in onChange already?
       if (deleted) {
         delete this.waitingForConsistency[pouchID];
-        throw "Document of type '" + type + "' with id '" + id + "' is deleted.";
+        throw new Error("Document of type '" + type + "' with id '" + id + "' is deleted.");
       } else if (deleted === null) {
-        return defer.promise;
+        return defered.promise;
       } else {
-        Ember.assert('Status should be existing', deleted === false);
+        assert('Status should be existing', deleted === false);
         //TODO: should we reject or resolve the promise? or does JS GC still clean it?
         if (this.waitingForConsistency[pouchID]) {
           delete this.waitingForConsistency[pouchID];
           return this._findRecord(type, id);
         } else {
           //findRecord is already handled by onChange
-          return defer.promise;
+          return defered.promise;
         }
       }
     });
   },
 
-  createRecord: function(store, type, record) {
-    this._init(store, type);
+  createdRecords: null,
+  createRecord: async function(store, type, record) {
+    await this._init(store, type);
     var data = this._recordToData(store, type, record);
-    return this.get('db').rel.save(this.getRecordTypeName(type), data);
+    let rel = this.get('db').rel;
+    
+    let id = data.id;
+    if (!id) {
+      id = data.id = rel.uuid();
+    }
+    this.createdRecords[id] = true;
+    
+    let typeName = this.getRecordTypeName(type);
+    try {
+      let saved = await rel.save(typeName, data);
+      Object.assign(data, saved);
+      let result = {};
+      result[pluralize(typeName)] = [data];
+      return result;
+    } catch(e) {
+      delete this.createdRecords[id];
+      throw e;
+    }
   },
 
-  updateRecord: function (store, type, record) {
-    this._init(store, type);
+  updateRecord: async function (store, type, record) {
+    await this._init(store, type);
     var data = this._recordToData(store, type, record);
-    return this.get('db').rel.save(this.getRecordTypeName(type), data);
+    let typeName = this.getRecordTypeName(type);
+    let saved = await this.get('db').rel.save(typeName, data);
+    Object.assign(data, saved);//TODO: could only set .rev
+    let result = {};
+    result[pluralize(typeName)] = [data];
+    return result;
   },
 
-  deleteRecord: function (store, type, record) {
-    this._init(store, type);
+  deleteRecord: async function (store, type, record) {
+    await this._init(store, type);
     var data = this._recordToData(store, type, record);
     return this.get('db').rel.del(this.getRecordTypeName(type), data)
       .then(extractDeleteRecord);

@@ -35,64 +35,69 @@ npm install ember-pouch@3.2.2 --save-dev
 ```
 
 This provides
-- `import PouchDB from 'pouchdb'`
+- `import PouchDB from 'ember-pouch/pouchdb';`
 - `import {Model, Adapter, Serializer} from 'ember-pouch'`
 
-`Ember-Pouch` requires you to add a `rev: DS.attr('string')` field to all your models. This is for PouchDB/CouchDB to handle revisions:
+`Ember-Pouch` requires you to add a `@attr('string') rev` field to all your models. This is for PouchDB/CouchDB to handle revisions:
 
-```js
+```javascript
 // app/models/todo.js
 
-import DS from 'ember-data';
+import Model, { attr } from '@ember-data/model';
 
-export default DS.Model.extend({
-  title       : DS.attr('string'),
-  isCompleted : DS.attr('boolean'),
-  rev         : DS.attr('string')    // <-- Add this to all your models
-});
+export default class TodoModel extends Model {
+  @attr('string') title;
+  @attr('boolean') isCompleted;
+  @attr('string') rev;               // <-- Add this to all your models
+}
 ```
 
 If you like, you can also use `Model` from `Ember-Pouch` that ships with the `rev` attribute:
 
-```js
+```javascript
 // app/models/todo.js
 
-import DS from 'ember-data';
+import { attr } from '@ember-data/model';
 import { Model } from 'ember-pouch';
 
-export default Model.extend({
-  title       : DS.attr('string'),
-  isCompleted : DS.attr('boolean')
-});
+export default class TodoModel extends Model {
+  @attr('string') title;
+  @attr('boolean') isCompleted;
+}
 ```
 
 ## Configuring /app/adapters/application.js
 
 A local PouchDB that syncs with a remote CouchDB looks like this:
 
-```js
+```javascript
 // app/adapters/application.js
 
-import PouchDB from 'pouchdb';
+import PouchDB from 'ember-pouch/pouchdb';
 import { Adapter } from 'ember-pouch';
 
-var remote = new PouchDB('http://localhost:5984/my_couch');
-var db = new PouchDB('local_pouch');
+let remote = new PouchDB('http://localhost:5984/my_couch');
+let db = new PouchDB('local_pouch');
 
 db.sync(remote, {
    live: true,   // do a live, ongoing sync
    retry: true   // retry if the connection is lost
 });
 
-export default Adapter.extend({
-  db: db
-});
+export default class ApplicationAdapter extends Adapter {
+  db = db;
+}
 ```
 
 You can also turn on debugging:
 
-```js
-import PouchDB from 'pouchdb';
+```javascript
+import PouchDB from 'ember-pouch/pouchdb';
+
+// For v7.0.0 and newer you must first load the 'pouchdb-debug' plugin
+// see https://github.com/pouchdb/pouchdb/tree/39ac9a7a1f582cf7a8d91c6bf9caa936632283a6/packages/node_modules/pouchdb-debug
+import pouchDebugPlugin from 'pouchdb-debug'; // (assumed available via ember-auto-import or shim)
+PouchDB.plugin(pouchDebugPlugin);
 
 PouchDB.debug.enable('*');
 ```
@@ -134,9 +139,11 @@ EmberPouch supports both `hasMany` and `belongsTo` relationships.
 
 To be more in line with the normal ember data way of saving `hasMany` - `belongsTo` relationships, ember-pouch now has an option to not save the child ids on the `hasMany` side. This prevents the extra need to save the `hasMany` side as explained below. For a more detailed explanation please read the [relational-pouch documentation](https://github.com/pouchdb-community/relational-pouch#dont-save-hasmany)
 
-This new mode can be selected for a `hasMany` relationship by specifying the option `dontsave: true` on the relationship. An application wide setting named `ENV.emberpouch.dontsavehasmany` can also be set to `true` to make all `hasMany` relationships behave this way.
+This new mode can be disabled for a `hasMany` relationship by specifying the option `save: true` on the relationship. An application wide setting named `ENV.emberPouch.saveHasMany` can also be set to `true` to make all `hasMany` relationships behave the old way.
 
 Using this mode does impose a slight runtime overhead, since this will use `db.find` and database indexes to search for the child ids. The indexes are created automatically for you. But large changes to the model might require you to clean up old, unused indexes.
+
+ℹ️ This mode is the default from version 5 onwards. Before that it was called `dontsave` and `dontsavehasmany`
 
 ### Saving child ids
 
@@ -147,32 +154,24 @@ When you do save child ids on the `hasMany` side, you have to follow the directi
 When saving a `hasMany` - `belongsTo` relationship, both sides of the relationship (the child and the parent) must be saved. Note that the parent needs to have been saved at least once prior to adding children to it.
 
 ```javascript
-// app/routes/post/index.js
-import Ember from 'ember';
+// app/controllers/posts/post.js
+import Controller from '@ember/controller';
+import { action } from '@ember/object';
 
-export default Ember.Route.extend({
-  model(params){
-    //We are getting a post that already exists
-    return this.store.findRecord('post',  params.post_id);
-  },
+export default class PostController extends Controller {
 
-  actions:{
-    addComment(comment, author){
-      //Create the comment
-      const comment = this.store.createRecord('comment',{
-        comment: comment,
-        author: author
-      });
-      //Get our post
-      const post = this.controller.get('model');
-      //Add our comment to our existing post
-      post.get('comments').pushObject(comment);
-      //Save the child then the parent
-      comment.save().then(() => post.save());
-    }
+@action addComment(comment, author){
+    //Create the comment
+    const comment = this.store.createRecord('comment',{
+      comment: comment,
+      author: author
+    });
+    //Add our comment to our existing post
+    this.model.comments.pushObject(comment);
+    //Save the child then the parent
+    comment.save().then(() => this.model.save());
   }
-});
-
+}
 ```
 
 #### Removing child ids
@@ -180,37 +179,33 @@ export default Ember.Route.extend({
 When removing a `hasMany` - `belongsTo` relationship, the children must be removed prior to the parent being removed.
 
 ```javascript
-// app/routes/posts/admin/index.js
-import Ember from 'ember';
+// app/controller/posts/admin.js
+import Controller from '@ember/controller';
+import { action } from '@ember/object';
+import { all } from 'rsvp';
 
-export default Ember.Route.extend({
-  model(){
-    //We are getting all posts for some sort of list
-    return this.store.findAll('post');
-  },
+export default class AdminController extends Controller {
 
-  actions:{
-    deletePost(post){
-      //collect the promises for deletion
-      let deletedComments = [];
-      //get and destroy the posts comments
-      post.get('comments').then((comments) => {
-        comments.map((comment) => {
-          deletedComments.push(comment.destroyRecord());
-        });
+@action deletePost(post){
+    //collect the promises for deletion
+    let deletedComments = [];
+    //get and destroy the posts comments
+    post.comments.then((comments) => {
+      comments.map((comment) => {
+        deletedComments.push(comment.destroyRecord());
       });
-      //Wait for comments to be destroyed then destroy the post
-      Ember.RSVP.all(deletedComments).then(() => {
-        post.destroyRecord();
-      });
-    }
+    });
+    //Wait for comments to be destroyed then destroy the post
+    all(deletedComments).then(() => {
+      post.destroyRecord();
+    });
   }
-});
+}
 ```
 
 ### Query and QueryRecord
 
-query and queryRecord are relying on [pouchdb-find](https://github.com/pouchdb-community/pouchdb-find)
+query and queryRecord are relying on [pouchdb-find](https://github.com/pouchdb/pouchdb/tree/master/packages/node_modules/pouchdb-find)
 
 ### db.createIndex(index [, callback])
 
@@ -238,25 +233,25 @@ function createDb() {
 Find all docs where doc.name === 'Mario'
 
 ```javascript
-// app/routes/smasher/index.js
-import Ember from 'ember';
+// app/routes/smasher.js
+import Route from '@ember/routing/route';
 
-export default Ember.Route.extend({
+export default class SmasherRoute extends Route {
   model() {
     return this.store.query('smasher',  {
       filter: { name: 'Mario' }
     });
   }
-});
+}
 ```
 
 Find all docs where doc.name === 'Mario' and doc.debut > 1990:
 
 ```javascript
-// app/routes/smasher/index.js
-import Ember from 'ember';
+// app/routes/smasher.js
+import Route from '@ember/routing/route';
 
-export default Ember.Route.extend({
+export default class SmasherRoute extends Route {
   model() {
     return this.store.query('smasher',  {
       filter: {
@@ -265,16 +260,16 @@ export default Ember.Route.extend({
       }
     });
   }
-});
+}
 ```
 
 Sorted by doc.debut descending.
 
 ```javascript
-// app/routes/smasher/index.js
-import Ember from 'ember';
+// app/routes/smasher.js
+import Route from '@ember/routing/route';
 
-export default Ember.Route.extend({
+export default class SmasherRoute extends Route {
   model() {
     return this.store.query('smasher',  {
       filter: {
@@ -286,16 +281,16 @@ export default Ember.Route.extend({
       ]
     })
   }
-});
+}
 ```
 
 Limit to 5 documents.
 
 ```javascript
-// app/routes/smasher/index.js
-import Ember from 'ember';
+// app/routes/smasher.js
+import Route from '@ember/routing/route';
 
-export default Ember.Route.extend({
+export default class SmasherRoute extends Route {
   model() {
     return this.store.query('smasher',  {
       filter: {
@@ -308,7 +303,29 @@ export default Ember.Route.extend({
       limit: 5
     })
   }
-});
+}
+```
+
+Skip the first 5 documents
+
+```javascript
+// app/routes/smasher.js
+import Route from '@ember/routing/route';
+
+export default class SmasherRoute extends Route {
+  model() {
+    return this.store.query('smasher',  {
+      filter: {
+        name: 'Mario',
+        debut: { '$gte': null }
+      },
+      sort: [
+        { debut: 'desc' }
+      ],
+      skip: 5
+    })
+  }
+}
 ```
 
 Note that this query would require a custom index including both fields `data.name` and `data.debut`.  Any field in `sort` must also be included in `filter`.  Only `$eq`, `$gt`, `$gte`, `$lt`, and `$lte` can be used when matching a custom index.
@@ -318,16 +335,16 @@ Note that this query would require a custom index including both fields `data.na
 Find one document where doc.name === 'Mario'
 
 ```javascript
-// app/routes/smasher/index.js
-import Ember from 'ember';
+// app/routes/smasher.js
+import Route from '@ember/routing/route';
 
-export default Ember.Route.extend({
+export default class SmasherRoute extends Route {
   model() {
     return this.store.queryRecord('smasher',  {
       filter: { name: 'Mario' }
     });
   }
-});
+}
 ```
 
 ## Attachments
@@ -336,15 +353,18 @@ export default Ember.Route.extend({
 
 Add a `DS.attr('attachments')` field to your model. Provide a default value for it to be an empty array.
 
-```js
+```javascript
 // myapp/models/photo-album.js
-export default DS.Model.extend({
-  photos: DS.attr('attachments', {
+import { attr } from '@ember-data/model';
+import { Model } from 'ember-pouch';
+
+export default class PhotoAlbumModel extends Model {
+  @attr('attachments', {
     defaultValue: function() {
       return [];
     }
-  });
-});
+  }) photos
+}
 ```
 
 Here, instances of `PhotoAlbum` have a `photos` field, which is an array of plain `Ember.Object`s, which have a `.name` and `.content_type`. Non-stubbed attachment also have a `.data` field; and stubbed attachments have a `.stub` instead.
@@ -358,9 +378,9 @@ Here, instances of `PhotoAlbum` have a `photos` field, which is an array of plai
 
 Attach new files by adding an `Ember.Object` with a `.name`, `.content_type` and `.data` to array of attachments.
 
-```js
+```javascript
 // somewhere in your controller/component:
-myAlbum.get('photos').addObject(Ember.Object.create({
+myAlbum.photos.addObject(Ember.Object.create({
   'name': 'kitten.jpg',
   'content_type': 'image/jpg',
   'data': btoa('hello world') // base64-encoded `String`, or a DOM `Blob`, or a `File`
@@ -392,12 +412,11 @@ However, ember-pouch does not automatically load new records that arrive during 
 
 If you have a model or two that you know will always have a small number of records, you can tell ember-data to automatically load them into memory as they arrive. Your PouchAdapter subclass has a method `unloadedDocumentChanged`, which is called when a document is received during sync that has not been loaded into the ember-data store. In your subclass, you can implement the following to load it automatically:
 
-```js
+```javascript
   unloadedDocumentChanged: function(obj) {
-    let store = this.get('store');
-    let recordTypeName = this.getRecordTypeName(store.modelFor(obj.type));
-    this.get('db').rel.find(recordTypeName, obj.id).then(function(doc) {
-      store.pushPayload(recordTypeName, doc);
+    let recordTypeName = this.getRecordTypeName(this.store.modelFor(obj.type));
+    this.db.rel.find(recordTypeName, obj.id).then((doc) => {
+      this.store.pushPayload(recordTypeName, doc);
     });
   },
 ```
@@ -406,18 +425,39 @@ If you have a model or two that you know will always have a small number of reco
 
 With PouchDB, you also get access to a whole host of [PouchDB plugins](http://pouchdb.com/external.html).
 
-For example, to use the `pouchdb-authentication` plugin, follow the install instructions and import it in your `Brocfile.js`:
-```js
-app.import('bower_components/pouchdb-authentication/dist/pouchdb.authentication.js');
+For example, to use the `pouchdb-authentication` plugin like this using `ember-auto-import`:
+```javascript
+import PouchDB from 'ember-pouch/pouchdb';
+import auth from 'pouchdb-authentication';
+
+PouchDB.plugin(auth);
+
 ```
 
 ### Relational Pouch
 
 Ember Pouch is really just a thin layer of Ember-y goodness over [Relational Pouch](https://github.com/pouchdb-community/relational-pouch). Before you file an issue, check to see if it's more appropriate to file over there.
 
-### Offline first
+### Offline First
 
-If you want to go completely [offline-first](http://offlinefirst.org/), you'll also need an HTML5 appcache.manifest with [broccoli-manifest](https://github.com/racido/broccoli-manifest). This will allow your HTML/CSS/JS assets to load even if the user is offline. Plus your users can "add to homescreen" on a mobile device (iOS/Android).
+Saving data locally using PouchDB is one part of making a web application [Offline First](http://offlinefirst.org/). However, you will also need to make your static assets available offline.
+
+There are two possible approaches to this. The first one is using the Application Cache (AP) feature. The second one is using Service Workers (SW). The Application Cache specification has been [removed from the Web standards](https://developer.mozilla.org/en-US/docs/Web/HTML/Using_the_application_cache). Mozilla now recommends to use [Service Workers](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API/Using_Service_Workers) instead.
+
+Most browser vendors still provide support for Application Cache and are in the process of implementing Service Workers. So depending on the browsers you target, you should go for one or the other. You can track the progress via [caniuse.com](https://caniuse.com/#feat=serviceworkers).
+
+#### 1. Application Cache
+
+You can use [broccoli-manifest](https://github.com/racido/broccoli-manifest) to create an HTML5 `appcache.manifest` file. This By default, will allow your index.html and `assets` directory to load even if the user is offline.
+
+#### 2. Service Workers
+
+We recommend using [Ember Service Worker](http://ember-service-worker.com) to get started with Service Workers for your web application. The website provide's an easy to follow guide on getting started with the addon.
+
+You can also take a look at Martin Broerse his [ember-cli-blog](https://github.com/broerse/ember-cli-blog/blob/14b95b443b851afa3632be3cbe631f055664b340/ember-cli-build.js) configuration for the plugin.
+
+⚠️ iOS does not yet support Service Workers. If you want to make your assets available offline for an iPhone or iPad, you have to go for the Application Cache strategy. Since Jan 10, 2018, [Safari Technology Preview does support Service Workers](https://webkit.org/blog/8060/release-notes-for-safari-technology-preview-47/). It's expected to land in iOS 12, but there's no certainity about that.
+
 
 ### Security
 
@@ -449,26 +489,25 @@ Ember-data can be slow to load large numbers of records which have lots of relat
 ```javascript
 // app/models/post.js
 
-import DS from 'ember-data';
+import { attr, belongsTo, hasMany } from '@ember-data/model';
 import { Model } from 'ember-pouch';
 
-export default Model.extend({
-    title: DS.attr('string'),
-    text: DS.attr('string'),
+export default class PostModel extends Model {
+  @attr('string') title;
+  @attr('string') text;
 
-    author: DS.belongsTo('author'),
-    comments: DS.hasMany('comments')
-});
-
+  @belongsTo('author') author;
+  @hasMany('comments') comments;
+}
 
 // app/models/post-summary.js
 
-import DS from 'ember-data';
+import { attr } from '@ember-data/model';
 import { Model } from 'ember-pouch';
 
-var PostSummary = Model.extend({
-    title: DS.attr('string'),
-});
+export default class PostSummaryModel extends Model {
+  @attr('string') title;
+}
 
 PostSummary.reopenClass({
   documentType: 'post'
@@ -483,7 +522,7 @@ For best results, only create/update records using the full model definition. Tr
 
 ## Multiple databases for the same model
 
-In some cases it might diserable (security related, where you want a given user to only have some informations stored on his computer) to have multiple databases for the same model of data.
+In some cases it might be desirable (security related, where you want a given user to only have some informations stored on his computer) to have multiple databases for the same model of data.
 
 `Ember-Pouch` allows you to dynamically change the database a model is using by calling the function `changeDb` on the adapter.
 
@@ -506,11 +545,18 @@ function changeProjectDatabase(dbName, dbUser, dbPassword) {
 ```
 
 
+## Eventually Consistent
+
+Following the CouchDB consistency model, we have introduced `ENV.emberPouch.eventuallyConsistent`. This feature is on by default. So if you want the old behavior you'll have to disable this flag.
+
+`findRecord` now returns a long running Promise if the record is not found. It only rejects the promise if a deletion of the record is found. Otherwise this promise will wait for eternity to resolve.
+This makes sure that belongsTo relations that have been loaded in an unexpected order will still resolve correctly. This makes sure that ember-data does not set the belongsTo to null if the Pouch replicate would have loaded the related object later on. (This only works for async belongsTo, sync versions will need this to be implemented in relational-pouch)
+
+
 ## Installation
 
 * `git clone` this repository
 * `npm install`
-* `bower install`
 
 ## Running
 
@@ -535,6 +581,43 @@ This project was originally based on the [ember-data-hal-adapter](https://github
 And of course thanks to all our wonderful contributors, [here](https://github.com/pouchdb-community/ember-pouch/graphs/contributors) and [in Relational Pouch](https://github.com/pouchdb-community/relational-pouch/graphs/contributors)!
 
 ## Changelog
+* **7.0.0**
+  - Use ember-auto-import and pouchdb-browser to ease the installation process
+  - relational-pouch@4.0.0
+  - Use Octane Blueprints
+* **6.0.0**
+  - Switch to PouchDB 7.0.0
+* **5.1.0**
+  - Don't unloadRecord a deleted document in onChange, only mark as deleted. This fixes some bugs with hasMany arrays corrupting in newer ember-data versions. Not unloading records also seems safer for routes that have that model active.
+* **5.0.1**
+  - Adapter `fixDeleteBug` flag. Defaults to `true`. Fixes [https://github.com/emberjs/data/issues/4963](https://github.com/emberjs/data/issues/4963) and related issues that don't seem to work well with server side delete notifications.
+  - Track newly inserted records, so `unloadedDocumentChanged` is not called for those. Otherwise a race-condition can occur where onChange is faster than the save. This can result in the document being inserted in the store via `unloadedDocumentChanged` before the save returns to ember-data. This will result in an assert that the id is already present in the store.
+* **5.0.0**
+  - Add warning for old `dontsavehasmany` use [#216](https://github.com/pouchdb-community/ember-pouch/pull/216)
+  - forcing the default serializer [#215](https://github.com/pouchdb-community/ember-pouch/pull/215)
+  - test + flag + doc for eventually-consistent [#214](https://github.com/pouchdb-community/ember-pouch/pull/214)
+  - config changes [#213](https://github.com/pouchdb-community/ember-pouch/pull/213)
+  - Update pouchdb to version 6.4.2 [#211](https://github.com/pouchdb-community/ember-pouch/pull/211)
+* **5.0.0-beta.6**
+  - Add register-version.js to vendor/ember-pouch [#210](https://github.com/pouchdb-community/ember-pouch/pull/210)
+  - Update documentation about Offline First [#209](https://github.com/pouchdb-community/ember-pouch/pull/209)
+* **5.0.0-beta.5**
+  - Add pouchdb.find.js from pouchdb [#208](https://github.com/pouchdb-community/ember-pouch/pull/208)
+  - createIndex promises should be done before removing [#208](https://github.com/pouchdb-community/ember-pouch/pull/208)
+  - Change sudo to required (see travis-ci/travis-ci#8836) [#208](https://github.com/pouchdb-community/ember-pouch/pull/208)
+  - Ignore same revision changes [#189](https://github.com/pouchdb-community/ember-pouch/pull/189)
+* **5.0.0-beta.4**
+  - Resolve Ember.String.pluralize() deprecation [#206](https://github.com/pouchdb-community/ember-pouch/pull/206)
+  - allow usage of skip parameter in pouchdb adapter queries [#198](https://github.com/pouchdb-community/ember-pouch/pull/198)
+* **5.0.0-beta.3**
+  - Fix Ember Data canary ember-try scenario [#202](https://github.com/pouchdb-community/ember-pouch/pull/202)
+  - Restore ember-try configuration for Ember Data [#201](https://github.com/pouchdb-community/ember-pouch/pull/201)
+  - Fix some jobs on Travis Trusty [#187](https://github.com/pouchdb-community/ember-pouch/pull/187)
+  - clean up db changes listener [#195](https://github.com/pouchdb-community/ember-pouch/pull/195)
+  - filter results of pouch adapter query by correct type [#194](https://github.com/pouchdb-community/ember-pouch/pull/194)
+  - allow usage of limit parameter in pouchdb adapter queries [#193](https://github.com/pouchdb-community/ember-pouch/pull/193)
+* **5.0.0-beta.2**
+  - version fix [#196](https://github.com/pouchdb-community/ember-pouch/pull/196)
 * **5.0.0-beta.1**
   - Eventually consistency added: documents that are not in the database will result in an 'eternal' promise. This promise will only resolve when an entry for that document is found. Deleted documents will also satisfy this promise. This mirrors the way that couchdb replication works, because the changes might not come in the order that ember-data expects. Foreign keys might therefor point to documents that have not been loaded yet. Ember-data normally resets these to null, but keeping the promise in a loading state will keep the relations intact until the actual data is loaded.
 * **4.3.0**

@@ -1,15 +1,16 @@
+import { later, run } from '@ember/runloop';
+import { Promise, all } from 'rsvp';
 import { module, test } from 'qunit';
+import { setupTest } from 'ember-qunit';
 
 import DS from 'ember-data';
 import moduleForIntegration from '../../helpers/module-for-pouch-acceptance';
 
-import Ember from 'ember';
-
 import config from 'dummy/config/environment';
 
 function promiseToRunLater(timeout) {
-  return new Ember.RSVP.Promise((resolve) => {
-    Ember.run.later(() => {
+  return new Promise((resolve) => {
+    later(() => {
       resolve();
     }, timeout);
   });
@@ -23,7 +24,7 @@ function promiseToRunLater(timeout) {
 
 
 function savingHasMany() {
-	return !config.emberpouch.dontsavehasmany;
+	return config.emberPouch.saveHasMany;
 }
 
 function getDocsForRelations() {
@@ -49,7 +50,9 @@ function getDocsForRelations() {
  */
 
 
-moduleForIntegration('Integration | Adapter | Basic CRUD Ops', {}, function() {
+module('Integration | Adapter | Basic CRUD Ops', {}, function(hooks) {
+setupTest(hooks); 
+moduleForIntegration(hooks);
 
 let allTests = function() {
 
@@ -57,7 +60,7 @@ test('can find all', function (assert) {
   assert.expect(3);
 
   var done = assert.async();
-  Ember.RSVP.Promise.resolve().then(() => {
+  Promise.resolve().then(() => {
     return this.db().bulkDocs([
       { _id: 'tacoSoup_2_A', data: { flavor: 'al pastor' } },
       { _id: 'tacoSoup_2_B', data: { flavor: 'black bean' } },
@@ -78,7 +81,7 @@ test('can find one', function (assert) {
   assert.expect(2);
 
   var done = assert.async();
-  Ember.RSVP.Promise.resolve().then(() => {
+  Promise.resolve().then(() => {
     return this.db().bulkDocs([
       { _id: 'tacoSoup_2_C', data: { flavor: 'al pastor' } },
       { _id: 'tacoSoup_2_D', data: { flavor: 'black bean' } },
@@ -96,7 +99,7 @@ test('can find one', function (assert) {
 test('can query with sort', function (assert) {
   assert.expect(3);
   var done = assert.async();
-  Ember.RSVP.Promise.resolve().then(() => {
+  Promise.resolve().then(() => {
     return this.db().createIndex({ index: {
       fields: ['data.name'] }
     }).then(() => {
@@ -125,7 +128,7 @@ test('can query with sort', function (assert) {
 test('can query multi-field queries', function (assert) {
   assert.expect(3);
   var done = assert.async();
-  Ember.RSVP.Promise.resolve().then(() => {
+  Promise.resolve().then(() => {
     return this.db().createIndex({ index: {
       fields: ['data.series', 'data.debut'] }
     }).then(() => {
@@ -155,7 +158,7 @@ test('can query multi-field queries', function (assert) {
 
 test('queryRecord returns null when no record is found', function (assert) {
   var done = assert.async();
-  Ember.RSVP.Promise.resolve().then(() => {
+  Promise.resolve().then(() => {
     return this.db().createIndex({ index: {
       fields: ['data.flavor'] }
     }).then(() => {
@@ -184,7 +187,7 @@ test('can query one record', function (assert) {
   assert.expect(1);
 
   var done = assert.async();
-  Ember.RSVP.Promise.resolve().then(() => {
+  Promise.resolve().then(() => {
     return this.db().createIndex({ index: {
       fields: ['data.flavor'] }
     }).then(() => {
@@ -203,7 +206,7 @@ test('can query one record', function (assert) {
 test('can query one associated records', function (assert) {
   assert.expect(3);
   var done = assert.async();
-  Ember.RSVP.Promise.resolve().then(() => {
+  Promise.resolve().then(() => {
     return this.db().createIndex({ index: {
       fields: ['data.flavor'] }
     }).then(() => {
@@ -228,7 +231,7 @@ test('can find associated records', function (assert) {
   assert.expect(3);
 
   var done = assert.async();
-  Ember.RSVP.Promise.resolve().then(() => {
+  Promise.resolve().then(() => {
     return this.db().bulkDocs(getDocsForRelations());
   }).then(() => {
     return this.store().find('taco-soup', 'C');
@@ -248,7 +251,7 @@ test('create a new record', function (assert) {
   assert.expect(2);
 
   var done = assert.async();
-  Ember.RSVP.Promise.resolve().then(() => {
+  Promise.resolve().then(() => {
     var newSoup = this.store().createRecord('taco-soup', { id: 'E', flavor: 'balsamic' });
     return newSoup.save();
   }).then(() => {
@@ -267,7 +270,7 @@ test('creating an associated record stores a reference to it in the parent', fun
   assert.expect(1);
 
   var done = assert.async();
-  Ember.RSVP.Promise.resolve().then(() => {
+  Promise.resolve().then(() => {
 		var s = { _id: 'tacoSoup_2_C', data: { flavor: 'al pastor'} };
 		if (savingHasMany()) {
 			s.data.ingredients = [];
@@ -286,8 +289,7 @@ test('creating an associated record stores a reference to it in the parent', fun
 	//tacoSoup.save() actually not needed in !savingHasmany mode, but should still work
     return newIngredient.save().then(() => savingHasMany() ? tacoSoup.save() : tacoSoup);
   }).then(() => {
-		this.store().unloadAll();
-
+    run(() => this.store().unloadAll());
     return this.store().findRecord('taco-soup', 'C');
   }).then(tacoSoup => {
     return tacoSoup.get('ingredients');
@@ -305,7 +307,7 @@ if (!DS.VERSION.match(/^2\.0/)) {
     assert.expect(2);
 
     var done = assert.async();
-    Ember.RSVP.Promise.resolve().then(() => {
+    Promise.resolve().then(() => {
       return this.db().bulkDocs([
         { _id: 'tacoSoup_2_C', data: { flavor: 'al pastor' } },
         { _id: 'tacoSoup_2_D', data: { flavor: 'black bean' } },
@@ -332,7 +334,7 @@ test('delete an existing record', function (assert) {
   assert.expect(1);
 
   var done = assert.async();
-  Ember.RSVP.Promise.resolve().then(() => {
+  Promise.resolve().then(() => {
     return this.db().bulkDocs([
       { _id: 'tacoSoup_2_C', data: { flavor: 'al pastor' } },
       { _id: 'tacoSoup_2_D', data: { flavor: 'black bean' } },
@@ -357,7 +359,7 @@ let asyncTests = function() {
 test('eventually consistency - success', function (assert) {
   assert.timeout(5000);
   var done = assert.async();
-  Ember.RSVP.Promise.resolve().then(() => {
+  Promise.resolve().then(() => {
     return this.db().bulkDocs([
       { _id: 'foodItem_2_X', data: { name: 'pineapple', soup: 'C' }},
       //{_id: 'tacoSoup_2_C', data: { flavor: 'test' } }
@@ -376,7 +378,7 @@ test('eventually consistency - success', function (assert) {
       ]);}),
     ];
     
-    return Ember.RSVP.all(result);
+    return all(result);
   })
   .finally(done);
 });
@@ -384,7 +386,7 @@ test('eventually consistency - success', function (assert) {
 test('eventually consistency - deleted', function (assert) {
   assert.timeout(5000);
   var done = assert.async();
-  Ember.RSVP.Promise.resolve().then(() => {
+  Promise.resolve().then(() => {
     return this.db().bulkDocs([
       { _id: 'foodItem_2_X', data: { name: 'pineapple', soup: 'C' }},
       //{_id: 'tacoSoup_2_C', data: { flavor: 'test' } }
@@ -403,9 +405,28 @@ test('eventually consistency - deleted', function (assert) {
       ])),
     ];
     
-    return Ember.RSVP.all(result);
+    return all(result);
   })
   .finally(done);
+});
+
+test('_init should work', function (assert) {
+  let db = this.db();
+  
+  assert.ok(db.rel == undefined, "should start without schema");
+  
+  let promises = [];
+  
+  let adapter = this.adapter();
+  promises.push(adapter._init(this.store(), this.store().modelFor('taco-soup')));
+
+//this tests _init synchronously by design, as re-entry and infitinite loop detection works this way
+  assert.ok(db.rel != undefined, "_init should set schema");
+  assert.equal(this.adapter()._schema.length, 2, "should have set all relationships on the schema");
+  
+  promises.push(adapter._init(this.store(), this.store().modelFor('taco-soup')));
+  
+  return all(promises);
 });
 
 //TODO: only do this for async or dontsavehasmany?
@@ -414,7 +435,7 @@ test('delete cascade null', function (assert) {
   assert.expect(2);
 
   var done = assert.async();
-  Ember.RSVP.Promise.resolve().then(() => {
+  Promise.resolve().then(() => {
     return this.db().bulkDocs(getDocsForRelations());
   })
 //  .then(() => this.store().findRecord('food-item', 'Z'))//prime ember-data store with Z
@@ -423,13 +444,13 @@ test('delete cascade null', function (assert) {
   .then((found) => {
     return found.destroyRecord();
   }).then(() => {
-    this.store().unloadAll();//to make sure the record is unloaded, normally this would be done by onChange listeren
+    run(() => this.store().unloadAll()); // normally this would be done by onChange listener
     return this.store().findRecord('food-item', 'Z');//Z should be updated now
   })
   .then((found) => {
-    return Ember.RSVP.Promise.resolve(found.get('soup')).catch(() => null).then((soup) => {
-      assert.ok(!found.belongsTo || found.belongsTo('soup').id() === null,
-        'should set id of belongsTo to null');
+    return Promise.resolve(found.get('soup')).catch(() => null).then((soup) => {
+      assert.ok(!found.belongsTo || found.belongsTo('soup').value() === null,
+        'should set value of belongsTo to null');
       return soup;
     });
   }).then((soup) => {
@@ -437,30 +458,118 @@ test('delete cascade null', function (assert) {
       'deleted soup should have cascaded to a null value for the belongsTo');
   }).finally(done);
 });
+
+test('remote delete removes belongsTo relationship', function (assert) {
+  assert.timeout(5000);
+  assert.expect(2);
+
+  var done = assert.async();
+  Promise.resolve().then(() => {
+    return this.db().bulkDocs(getDocsForRelations());
+  })
+  .then(() => this.store().findRecord('food-item', 'Z'))//prime ember-data store with Z
+  .then(found => found.get('soup'))//prime belongsTo
+  .then((found) => {
+    let id = "tacoSoup_2_" + found.id;
+    let promise = this.adapter().waitForChangeWithID(id);
+    
+    this.db().remove(id, found.get('rev'));
+    
+    return promise;
+  }).then(() => {
+    return this.store().findRecord('food-item', 'Z');//Z should be updated now
+  })
+  .then((found) => {
+    return Promise.resolve(found.get('soup')).catch(() => null).then((soup) => {
+      assert.ok(!found.belongsTo || found.belongsTo('soup').value() === null,
+        'should set value of belongsTo to null');
+      return soup;
+    });
+  }).then((soup) => {
+    assert.ok(soup === null,
+      'deleted soup should have cascaded to a null value for the belongsTo');
+  }).finally(done);
+});
+
+test('remote delete removes hasMany relationship', function (assert) {
+  assert.timeout(5000);
+  assert.expect(3);
+  
+  let liveIngredients = null;
+
+  var done = assert.async();
+  Promise.resolve().then(() => {
+    return this.db().bulkDocs(getDocsForRelations());
+  })
+  .then(() => this.store().findRecord('taco-soup', 'C'))//prime ember-data store with C
+  .then(found => found.get('ingredients'))//prime hasMany
+  .then((ingredients) => {
+    liveIngredients = ingredients;//save for later
+    
+    assert.equal(ingredients.length, 2, "should be 2 food items initially");
+    
+    let itemToDelete = ingredients.toArray()[0];
+    let id = "foodItem_2_" + itemToDelete.id;
+    let promise = this.adapter().waitForChangeWithID(id);
+    
+    this.db().remove(id, itemToDelete.get('rev'));
+    
+    return promise;
+  }).then(() => {
+    return this.store().findRecord('taco-soup', 'C');//get updated soup.ingredients
+  })
+  .then(found => found.get('ingredients'))
+  .then((ingredients) => {
+    assert.equal(    ingredients.length, 1, "1 food item should be removed from the relationship");
+    assert.equal(liveIngredients.length, 1, "1 food item should be removed from the live relationship");
+  }).finally(done);
+});
+
+module('not eventually consistent', { beforeEach: function() {
+  config.emberPouch.eventuallyConsistent = false;
+  },
+  afterEach: function() {
+    config.emberPouch.eventuallyConsistent = true;
+  }
+  }, function() {
+    test('not found', function (assert) {
+      assert.expect(2);
+      assert.ok(config.emberPouch.eventuallyConsistent == false, 'eventuallyConsistent is false');
+      let done = assert.async();
+      
+      Promise.resolve().then(() => this.store().findRecord('food-item', 'non-existent')
+        .then(() => assert.ok(false))
+        .catch(() => {
+          assert.ok(true, 'item is not found');
+          done();
+        }));
+  });
+});
+
 };
 
 	let syncAsync = function() {
 		module('async', {
 			beforeEach: function() {
-				config.emberpouch.async = true;
+				config.emberPouch.async = true;
 			}
 		}, () => { allTests(); asyncTests(); });
 		module('sync', {
 			beforeEach: function() {
-				config.emberpouch.async = false;
+				config.emberPouch.async = false;
 			}
 		}, allTests);
 	};
 
 	module('dont save hasMany', {
 		beforeEach: function() {
-			config.emberpouch.dontsavehasmany = true;
+			config.emberPouch.saveHasMany = false;
 		}
 	}, syncAsync);
 
 	module('save hasMany', {
 		beforeEach: function() {
-			config.emberpouch.dontsavehasmany = false;
+			config.emberPouch.saveHasMany = true;
 		}
 	}, syncAsync);
 });
