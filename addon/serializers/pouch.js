@@ -67,7 +67,7 @@ var Serializer = DS.RESTSerializer.extend({
     let modelAttrs = get(modelClass, 'attributes');
     modelClass.eachTransformedAttribute(key => {
       let attribute = modelAttrs.get(key);
-      if (this._isAttachment(attribute)) {
+      if (this._isAttachment(attribute) && attribute[key]) {
         // put the corresponding _attachments entries from the response into the attribute
         let fileNames = keys(attributes[key]);
         fileNames.forEach(fileName => {
