@@ -1,10 +1,6 @@
 /* eslint-env node */
 'use strict';
 
-var stew = require('broccoli-stew');
-var writeFile = require('broccoli-file-creator');
-var version = require('./package.json').version;
-
 module.exports = {
   name: require('./package').name,
 
@@ -28,18 +24,6 @@ module.exports = {
     if (bowerDeps['pouchdb-find']) {this.ui.writeWarnLine('Please remove `pouchdb-find` from `bower.json`. As of ember-pouch 4.2.0, only the NPM package is needed.');}
   },
 
-  treeForVendor: function() {
-    var content = "Ember.libraries.register('Ember Pouch', '" + version + "');";
-    var registerVersionTree = writeFile(
-      'ember-pouch/register-version.js',
-      content
-    );
-
-    return stew.find([
-      registerVersionTree
-    ]);
-  },
-
   included(app) {
     this._super.included.apply(this, arguments);
 
@@ -47,8 +31,6 @@ module.exports = {
     if (typeof app.import !== 'function' && app.app) {
       app = app.app;
     }
-
-    app.import('vendor/ember-pouch/register-version.js');
 
     let env = this.project.config(app.env);
     if (env.emberpouch) {
